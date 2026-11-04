@@ -28,9 +28,13 @@ struct WebView: UIViewRepresentable {
         let chromeShim = """
         window.chrome = {
             runtime: {
-                sendMessage: function(msg, cb) { if(cb) cb({}); },
-                onMessage: { addListener: function() {} },
-                getURL: function(path) { return path; }
+                id: "mock-extension-id",
+                getURL: function(path) { return "https://chat.deepseek.com/" + path; },
+                sendMessage: function(msg, cb) { 
+                    console.log("Message sent:", msg);
+                    if(cb) cb({}); 
+                },
+                onMessage: { addListener: function() {} }
             },
             storage: {
                 local: {
@@ -45,10 +49,12 @@ struct WebView: UIViewRepresentable {
         };
         """
         
-        // 2️⃣ PASTE YOUR EXTENSION CODE HERE (Between the triple quotes)
-        let extensionCode = """
-        // PASTE THE CONTENT FROM content-scripts/content.js HERE
-        """
+        // 2️⃣ YOUR EXTENSION CODE (Raw String to handle special characters)
+        let extensionCode = #"""
+        
+        // ⬇️ PASTE THE HUGE CONTENT.JS TEXT YOU JUST SENT ME EXACTLY HERE ⬇️
+        
+        """#
         
         // Inject the shim first, then the extension
         let script1 = WKUserScript(source: chromeShim, injectionTime: .atDocumentStart, forMainFrameOnly: false)
