@@ -1,57 +1,49 @@
-//
-//  ContentView.swift
-//  PakePlus
-//
-//  Created by Song on 2025/3/29.
-//
-
 import SwiftUI
-import UIKit
+import WebKit
+import AVFoundation
 
-struct ContentView: View {
-    // read value from info
-    let webUrl = Bundle.main.object(forInfoDictionaryKey: "WEBURL") as? String ?? ""
-    let debug = Bundle.main.object(forInfoDictionaryKey: "DEBUG") as? Bool ?? false
-    let fullScreen = Bundle.main.object(forInfoDictionaryKey: "FULLSCREEN") as? Bool ?? false
-    let launchImage = Bundle.main.object(forInfoDictionaryKey: "LAUNCHIMAGE") as? Bool ?? false
-    let screenOn = Bundle.main.object(forInfoDictionaryKey: "SCREENON") as? Bool ?? false
-
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var isWebLoaded: Bool = false
-
-    var body: some View {
-        // BottomMenuView()
-        ZStack {
-            // webview
-            WebView(
-                webUrl: URL(string: webUrl)!,
-                debug: debug,
-                onLoadFinished: {
-                    isWebLoaded = true
-                }
-            )
-            .ignoresSafeArea(edges: [.all])
-            .allowsHitTesting(isWebLoaded)
-            
-            // loading screen
-            if !isWebLoaded && launchImage {
-                Image("LaunchScreen")
-                    .resizable()
-                    .scaledToFill()
-                    .ignoresSafeArea()
-                    .transition(.opacity)
-            }
-        }
-        .statusBarHidden(fullScreen)
-        .onAppear {
-            UIApplication.shared.isIdleTimerDisabled = screenOn
-        }
-        .onChange(of: scenePhase) { phase in
-            UIApplication.shared.isIdleTimerDisabled = screenOn && (phase == .active)
-        }
+class AudioManager {
+    static let shared = AudioManager()
+    private var audioPlayer: AVAudioPlayer?
+    
+    func startBackgroundAudio() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+            let audioData = Data(count: 44100) 
+            audioPlayer = try AVAudioPlayer(data: audioData, fileTypeHint: AVFileType.wav.rawValue)
+            audioPlayer?.numberOfLoops = -1
+            audioPlayer?.play()
+        } catch { print("Audio hack failed: \(error)") }
     }
 }
 
-// #Preview {
-//     ContentView()
-// }
+struct WebView: UIViewRepresentable {
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        
+        // 🚨 PASTE YOUR DEEPSEEK++ JAVASCRIPT HERE LATER 🚨
+        let deepSeekScript = """
+        console.log('DeepSeek++ Native Injection Active!');
+        """
+        
+        let userScript = WKUserScript(source: deepSeekScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        config.userContentController.addUserScript(userScript)
+        
+        let webView = WKWebView(frame: .zero, configuration: config)
+        if let url = URL(string: "https://chat.deepseek.com") {
+            webView.load(URLRequest(url: url))
+        }
+        return webView
+    }
+    
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
+}
+
+struct ContentView: View {
+    var body: some View {
+        WebView()
+            .edgesIgnoringSafeArea(.all)
+            .onAppear { AudioManager.shared.startBackgroundAudio() }
+    }
+}
