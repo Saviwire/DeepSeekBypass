@@ -1,76 +1,49 @@
-name: Build IPA
+name: Build iOS App
 
 on:
-    workflow_dispatch:
-    # push:
-    #     branches:
-    #         - main
-
-permissions:
-    contents: write
-    pages: write
-    id-token: write
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
-    build:
-        runs-on: macos-26
+  build:
+    runs-on: macos-latest
 
-        steps:
-            - name: Checkout Repository
-              uses: actions/checkout@v4
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
-            - name: Set up Xcode
-              uses: maxim-lobanov/setup-xcode@v1
-              with:
-                  xcode-version: latest-stable
+    - name: Select Xcode Version
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
 
-            - uses: pnpm/action-setup@v4
-              with:
-                  version: 10
+    - name: Build the App (No Code Signing)
+      run: |
+        # Find the scheme dynamically
+        SCHEME=$(xcodebuild -list -project PakePlus.xcodeproj | grep -A 1 "Schemes:" | tail -n 1 | xargs)
+        
+        # Build the app for iOS device (unsigned)
+        xcodebuild clean build \
+          -project PakePlus.xcodeproj \
+          -scheme "$SCHEME" \
+          -sdk iphoneos \
+          -configuration Release \
+          CODE_SIGNING_ALLOWED=NO \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGN_IDENTITY="" \
+          CONFIGURATION_BUILD_DIR=$(pwd)/build
 
-            - name: Sync node version and setup cache
-              uses: actions/setup-node@v4
-              with:
-                  node-version: 22.14.0
+    - name: Create IPA
+      run: |
+        mkdir Payload
+        # Find the compiled .app and move it to Payload
+        APP_PATH=$(find build -name "*.app" | head -n 1)
+        cp -r "$APP_PATH" Payload/
+        zip -r DeepSeekBypass.ipa Payload
 
-            - name: Init Project Config
-              run: |
-                  pnpm install --no-frozen-lockfile
-                  pnpm pp:worker
-
-            - name: Generate AppIcon
-              run: |
-                  echo "Installing appicon tool..."
-                  brew install Nonchalant/appicon/appicon
-                  echo "Generating AppIcon..."
-                  appicon app-icon.png --output-path ./PakePlus/Assets.xcassets/AppIcon.appiconset
-
-            - name: Build for Release
-              run: |
-                  xcodebuild -project PakePlus.xcodeproj -scheme PakePlus -configuration Release -sdk iphoneos \
-                    CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
-
-            - name: Package IPA
-              run: |
-                  APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -type d -name "PakePlus.app" | grep Release-iphoneos | head -n 1)
-                  echo "APP_PATH is $APP_PATH"
-                  mkdir -p Payload
-                  cp -R "$APP_PATH" Payload/
-                  NAME="${{ env.NAME }}"
-                  VERSION="${{ env.VERSION }}"
-                  ISHTML="${{ env.ISHTML }}"
-                  ${ISHTML} && cp -R ./Scripts/www/* ./Payload/PakePlus.app/
-                  zip -r ${NAME}-${VERSION}.ipa Payload
-                  mkdir -p export
-                  mv ${NAME}-${VERSION}.ipa export/
-
-            - name: Publish IPA
-              uses: softprops/action-gh-release@v1
-              with:
-                  files: export/${{ env.NAME }}-${{ env.VERSION }}.ipa
-                  tag_name: '${{ env.NAME }}'
-                  name: '${{ env.NAME }} v${{ env.VERSION }}'
-                  body: '${{ env.PUBBODY }}'
-                  draft: false
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Upload IPA Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: DeepSeekBypass-IPA
+        path: DeepSeekBypass.ipa
