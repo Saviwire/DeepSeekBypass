@@ -20,20 +20,20 @@ class AudioManager {
 }
 
 struct WebView: UIViewRepresentable {
+    // 🚨 PASTE YOUR RAW GITHUB URL HERE 🚨
+    let scriptURL = "https://raw.githubusercontent.com/SaviWire/DeepSeekBypass/main/inject.js"
+    
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         let userContentController = WKUserContentController()
         
-        // 1️⃣ THE CHROME API SHIM (Makes iOS WebView act like Google Chrome)
+        // 1️⃣ The Chrome API Shim
         let chromeShim = """
         window.chrome = {
             runtime: {
                 id: "mock-extension-id",
                 getURL: function(path) { return "https://chat.deepseek.com/" + path; },
-                sendMessage: function(msg, cb) { 
-                    console.log("Message sent:", msg);
-                    if(cb) cb({}); 
-                },
+                sendMessage: function(msg, cb) { if(cb) cb({}); },
                 onMessage: { addListener: function() {} }
             },
             storage: {
@@ -49,23 +49,14 @@ struct WebView: UIViewRepresentable {
         };
         """
         
-        // 2️⃣ YOUR EXTENSION CODE (Raw String to handle special characters)
-        let extensionCode = #"""
-        
-        // ⬇️ PASTE THE HUGE CONTENT.JS TEXT YOU JUST SENT ME EXACTLY HERE ⬇️
-        
-        """#
-        
-        // Inject the shim first, then the extension
         let script1 = WKUserScript(source: chromeShim, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        let script2 = WKUserScript(source: extensionCode, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
-        
         userContentController.addUserScript(script1)
-        userContentController.addUserScript(script2)
         
         config.userContentController = userContentController
         
         let webView = WKWebView(frame: .zero, configuration: config)
+        webView.navigationDelegate = context.coordinator // Set delegate to catch page load
+        
         if let url = URL(string: "https://chat.deepseek.com") {
             webView.load(URLRequest(url: url))
         }
@@ -73,6 +64,36 @@ struct WebView: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: WKWebView, context: Context) {}
+    
+    // Coordinator to inject the script after the page loads
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject, WKNavigationDelegate {
+        var parent: WebView
+        init(_ parent: WebView) { self.parent = parent }
+        
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            // Fetch the JS file from GitHub
+            guard let url = URL(string: parent.scriptURL) else { return }
+            
+            URLSession.shared.dataTask(with: url) { data, response, error in
+                if let data = data, let jsString = String(data: data, encoding: .utf8) {
+                    DispatchQueue.main.async {
+                        // Inject the fetched script into the page
+                        webView.evaluateJavaScript(jsString) { result, error in
+                            if let error = error {
+                                print("Failed to inject JS: \(error)")
+                            } else {
+                                print("DeepSeek++ Injected Successfully!")
+                            }
+                        }
+                    }
+                }
+            }.resume()
+        }
+    }
 }
 
 struct ContentView: View {
