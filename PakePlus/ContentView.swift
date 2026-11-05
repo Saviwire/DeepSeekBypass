@@ -2,11 +2,9 @@ import SwiftUI
 import WebKit
 import AVFoundation
 
-// 🎧 Silent Audio Hack (Keeps app alive in background)
 class AudioManager {
     static let shared = AudioManager()
     private var audioPlayer: AVAudioPlayer?
-    
     func startBackgroundAudio() {
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
@@ -20,78 +18,71 @@ class AudioManager {
 }
 
 struct WebView: UIViewRepresentable {
-    // 🚨 YOUR CUSTOM RAW GITHUB URL IS HERE 🚨
-    let scriptURL = "https://raw.githubusercontent.com/Saviwire/DeepSeekBypass/refs/heads/main/inject.js"
+    // 🚨 YOUR CLOUD BRAIN URL (Note the wss://) 🚨
+    let cloudBrainURL = "wss://deepseek-cloud-brain.jenniferanistonchat1969.workers.dev"
     
     func makeUIView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        let userContentController = WKUserContentController()
+        let webView = WKWebView(frame: .zero)
+        webView.navigationDelegate = context.coordinator
         
-        // 1️⃣ The Chrome API Shim
-        let chromeShim = """
-        window.chrome = {
-            runtime: {
-                id: "mock-extension-id",
-                getURL: function(path) { return "https://chat.deepseek.com/" + path; },
-                sendMessage: function(msg, cb) { if(cb) cb({}); },
-                onMessage: { addListener: function() {} }
-            },
-            storage: {
-                local: {
-                    get: function(keys, cb) { if(cb) cb({}); },
-                    set: function(items, cb) { if(cb) cb(); }
-                }
-            },
-            sidePanel: {
-                setPanelBehavior: function() {},
-                setOptions: function() {}
-            }
-        };
-        """
+        // Show a loading screen while connecting to the cloud
+        let loadingHTML = "<html><body style='background:#111;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;'><h2>Connecting to Cloud Brain...</h2></body></html>"
+        webView.loadHTMLString(loadingHTML, baseURL: nil)
         
-        let script1 = WKUserScript(source: chromeShim, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        userContentController.addUserScript(script1)
-        
-        config.userContentController = userContentController
-        
-        let webView = WKWebView(frame: .zero, configuration: config)
-        webView.navigationDelegate = context.coordinator // Set delegate to catch page load
-        
-        if let url = URL(string: "https://chat.deepseek.com") {
-            webView.load(URLRequest(url: url))
-        }
+        // Connect to the Cloud Brain
+        context.coordinator.connectToCloudBrain(webView: webView, urlString: cloudBrainURL)
         return webView
     }
     
     func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
     
-    // Coordinator to inject the script after the page loads
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-    
-    class Coordinator: NSObject, WKNavigationDelegate {
+    class Coordinator: NSObject, WKNavigationDelegate, URLSessionWebSocketDelegate {
         var parent: WebView
+        var webSocketTask: URLSessionWebSocketTask?
+        
         init(_ parent: WebView) { self.parent = parent }
         
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // Fetch the JS file from GitHub
-            guard let url = URL(string: parent.scriptURL) else { return }
-            
-            URLSession.shared.dataTask(with: url) { data, response, error in
-                if let data = data, let jsString = String(data: data, encoding: .utf8) {
-                    DispatchQueue.main.async {
-                        // Inject the fetched script into the page
-                        webView.evaluateJavaScript(jsString) { result, error in
-                            if let error = error {
-                                print("Failed to inject JS: \(error)")
-                            } else {
-                                print("DeepSeek++ Injected Successfully!")
+        func connectToCloudBrain(webView: WKWebView, urlString: String) {
+            guard let url = URL(string: urlString) else { return }
+            let session = URLSession(configuration: .default, delegate: self, delegateQueue: OperationQueue.main)
+            webSocketTask = session.webSocketTask(with: url)
+            webSocketTask?.resume()
+            receiveMessage(webView: webView)
+        }
+        
+        func receiveMessage(webView: WKWebView) {
+            webSocketTask?.receive { [weak self] result in
+                switch result {
+                case .success(let message):
+                    if case .string(let text) = message {
+                        // Parse JSON from Cloudflare (e.g., {"type": "update", "html": "..."})
+                        if let data = text.data(using: .utf8),
+                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                           let type = json["type"] as? String, type == "update",
+                           let html = json["html"] as? String {
+                            DispatchQueue.main.async {
+                                // Load the HTML streamed from the Cloud Brain
+                                webView.loadHTMLString(html, baseURL: URL(string: "https://chat.deepseek.com"))
                             }
                         }
                     }
+                    self?.receiveMessage(webView: webView)
+                case .failure(let error):
+                    print("WebSocket Error: \(error)")
                 }
-            }.resume()
+            }
+        }
+        
+        // Send commands to Cloud Brain (You can call this from your SwiftUI buttons later)
+        func sendCommand(type: String, data: [String: Any]) {
+            let payload = ["type": type].merging(data) { _, new in new }
+            if let jsonData = try? JSONSerialization.data(withJSONObject: payload),
+               let jsonString = String(data: jsonData, encoding: .utf8) {
+                webSocketTask?.send(.string(jsonString)) { error in
+                    if let error = error { print("Send error: \(error)") }
+                }
+            }
         }
     }
 }
