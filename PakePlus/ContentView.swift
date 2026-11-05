@@ -18,30 +18,64 @@ class AudioManager {
 }
 
 struct WebView: UIViewRepresentable {
+    let scriptURL = "https://raw.githubusercontent.com/Saviwire/DeepSeekBypass/refs/heads/main/inject.js"
     let cloudBrainURL = "wss://deepseek-cloud-brain.jenniferanistonchat1969.workers.dev"
     
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        let contentController = WKUserContentController()
         
-        // 🌉 The JS Bridge: Captures taps and sends them to Swift
-        let jsBridge = """
-        document.addEventListener('click', function(e) {
-            window.webkit.messageHandlers.bridge.postMessage({type: 'click', text: e.target.innerText, tag: e.target.tagName});
-        });
+        // 🎥 Camera & Media Fixes
+        config.allowsInlineMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
+        
+        let userContentController = WKUserContentController()
+        
+        let chromeShim = """
+        window.chrome = {
+            runtime: {
+                id: "native-ios-harness",
+                getURL: function(path) { return "https://chat.deepseek.com/" + path; },
+                sendMessage: function(msg, cb) { if(cb) cb({}); },
+                sendNativeMessage: function(app, msg, cb) {
+                    let reqId = Date.now().toString();
+                    window.webkit.messageHandlers.cloudBridge.postMessage({app: app, msg: msg, reqId: reqId});
+                    window._nativeCallbacks = window._nativeCallbacks || {};
+                    window._nativeCallbacks[reqId] = cb;
+                },
+                onMessage: { addListener: function() {} }
+            },
+            storage: {
+                local: {
+                    get: function(keys, cb) { if(cb) cb({}); },
+                    set: function(items, cb) { if(cb) cb(); }
+                }
+            },
+            sidePanel: {
+                setPanelBehavior: function() {},
+                setOptions: function() {}
+            }
+        };
+        
+        window.receiveNativeMessage = function(data) {
+            if (window._nativeCallbacks && window._nativeCallbacks[data.reqId]) {
+                window._nativeCallbacks[data.reqId](data.result);
+                delete window._nativeCallbacks[data.reqId];
+            }
+        };
         """
-        let userScript = WKUserScript(source: jsBridge, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
-        contentController.addUserScript(userScript)
+        
+        userContentController.addUserScript(WKUserScript(source: chromeShim, injectionTime: .atDocumentStart, forMainFrameOnly: false))
+        userContentController.add(context.coordinator, name: "cloudBridge")
+        
+        config.userContentController = userContentController
+        config.websiteDataStore = .default() 
         
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
-        contentController.add(context.coordinator, name: "bridge")
-        config.userContentController = contentController
         
-        let loadingHTML = "<html><body style='background:#111;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;'><h2>Connecting to Cloud Brain...</h2></body></html>"
-        webView.loadHTMLString(loadingHTML, baseURL: nil)
-        
-        context.coordinator.connectToCloudBrain(webView: webView, urlString: cloudBrainURL)
+        if let url = URL(string: "https://chat.deepseek.com") {
+            webView.load(URLRequest(url: url))
+        }
         return webView
     }
     
@@ -54,54 +88,54 @@ struct WebView: UIViewRepresentable {
         
         init(_ parent: WebView) { self.parent = parent }
         
-        func connectToCloudBrain(webView: WKWebView, urlString: String) {
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard let url = URL(string: parent.scriptURL) else { return }
+            URLSession.shared.dataTask(with: url) { data, _, _ in
+                if let data = data, let jsString = String(data: data, encoding: .utf8) {
+                    DispatchQueue.main.async { webView.evaluateJavaScript(jsString) }
+                }
+            }.resume()
+            
+            connectToCloudBrain(urlString: parent.cloudBrainURL)
+        }
+        
+        func connectToCloudBrain(urlString: String) {
             guard let url = URL(string: urlString) else { return }
             let session = URLSession(configuration: .default, delegate: self, delegateQueue: OperationQueue.main)
             webSocketTask = session.webSocketTask(with: url)
             webSocketTask?.resume()
-            receiveMessage(webView: webView)
+            receiveCloudMessage()
         }
         
-        func receiveMessage(webView: WKWebView) {
+        func receiveCloudMessage() {
             webSocketTask?.receive { [weak self] result in
-                switch result {
-                case .success(let message):
-                    if case .string(let text) = message {
-                        if let data = text.data(using: .utf8),
-                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                           let type = json["type"] as? String, type == "update",
-                           let html = json["html"] as? String {
-                            DispatchQueue.main.async {
-                                webView.loadHTMLString(html, baseURL: URL(string: "https://chat.deepseek.com"))
-                            }
-                        }
+                if case .success(let message) = result,
+                   case .string(let text) = message,
+                   let data = text.data(using: .utf8),
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let reqId = json["reqId"] as? String,
+                   let resultString = json["result"] as? String {
+                    DispatchQueue.main.async {
+                        self?.webSocketTask?.currentWebView?.evaluateJavaScript("window.receiveNativeMessage({reqId: '\(reqId)', result: \(resultString)})")
                     }
-                    self?.receiveMessage(webView: webView)
-                case .failure(let error):
-                    print("WebSocket Error: \(error)")
                 }
+                self?.receiveCloudMessage()
             }
         }
         
-        // Send commands to Cloud Brain
-        func sendCommand(type: String, data: [String: Any]) {
-            let payload = ["type": type].merging(data) { _, new in new }
-            if let jsonData = try? JSONSerialization.data(withJSONObject: payload),
-               let jsonString = String(data: jsonData, encoding: .utf8) {
-                webSocketTask?.send(.string(jsonString)) { error in
-                    if let error = error { print("Send error: \(error)") }
-                }
-            }
-        }
-        
-        // Catch the taps from the webview
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            if message.name == "bridge", let dict = message.body as? [String: Any] {
-                print("User tapped: \(dict)")
-                // We will send this to the worker later
+            if message.name == "cloudBridge", let body = message.body as? [String: Any], let reqId = body["reqId"] as? String {
+                if let jsonData = try? JSONSerialization.data(withJSONObject: body),
+                   let jsonString = String(data: jsonData, encoding: .utf8) {
+                    webSocketTask?.send(.string(jsonString)) { _ in }
+                }
             }
         }
     }
+}
+
+extension URLSessionWebSocketTask {
+    var currentWebView: WKWebView? { nil } 
 }
 
 struct ContentView: View {
