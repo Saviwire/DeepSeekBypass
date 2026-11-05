@@ -20,14 +20,14 @@ class AudioManager {
 }
 
 struct WebView: UIViewRepresentable {
-    // 🚨 PASTE YOUR RAW GITHUB URL HERE 🚨
-    let scriptURL = "https://raw.githubusercontent.com/SaviWire/DeepSeekBypass/main/inject.js"
+    // 🚨 YOUR CUSTOM URL IS PLUGGED IN HERE 🚨
+    let scriptURL = "https://raw.githubusercontent.com/Saviwire/DeepSeekBypass/refs/heads/main/inject.js"
     
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         let userContentController = WKUserContentController()
         
-        // 1️⃣ The Chrome API Shim
+        // 1️⃣ The Chrome API Shim (fakes the Chrome extension environment)
         let chromeShim = """
         window.chrome = {
             runtime: {
@@ -55,7 +55,7 @@ struct WebView: UIViewRepresentable {
         config.userContentController = userContentController
         
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.navigationDelegate = context.coordinator // Set delegate to catch page load
+        webView.navigationDelegate = context.coordinator
         
         if let url = URL(string: "https://chat.deepseek.com") {
             webView.load(URLRequest(url: url))
@@ -65,7 +65,6 @@ struct WebView: UIViewRepresentable {
     
     func updateUIView(_ uiView: WKWebView, context: Context) {}
     
-    // Coordinator to inject the script after the page loads
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
@@ -75,13 +74,13 @@ struct WebView: UIViewRepresentable {
         init(_ parent: WebView) { self.parent = parent }
         
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // Fetch the JS file from GitHub
             guard let url = URL(string: parent.scriptURL) else { return }
             
+            // Fetch the massive JS file from your GitHub
             URLSession.shared.dataTask(with: url) { data, response, error in
                 if let data = data, let jsString = String(data: data, encoding: .utf8) {
                     DispatchQueue.main.async {
-                        // Inject the fetched script into the page
+                        // Inject it into the page
                         webView.evaluateJavaScript(jsString) { result, error in
                             if let error = error {
                                 print("Failed to inject JS: \(error)")
