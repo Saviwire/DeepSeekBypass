@@ -18,18 +18,29 @@ class AudioManager {
 }
 
 struct WebView: UIViewRepresentable {
-    // 🚨 YOUR CLOUD BRAIN URL (Note the wss://) 🚨
     let cloudBrainURL = "wss://deepseek-cloud-brain.jenniferanistonchat1969.workers.dev"
     
     func makeUIView(context: Context) -> WKWebView {
-        let webView = WKWebView(frame: .zero)
-        webView.navigationDelegate = context.coordinator
+        let config = WKWebViewConfiguration()
+        let contentController = WKUserContentController()
         
-        // Show a loading screen while connecting to the cloud
+        // 🌉 The JS Bridge: Captures taps and sends them to Swift
+        let jsBridge = """
+        document.addEventListener('click', function(e) {
+            window.webkit.messageHandlers.bridge.postMessage({type: 'click', text: e.target.innerText, tag: e.target.tagName});
+        });
+        """
+        let userScript = WKUserScript(source: jsBridge, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+        contentController.addUserScript(userScript)
+        
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.navigationDelegate = context.coordinator
+        contentController.add(context.coordinator, name: "bridge")
+        config.userContentController = contentController
+        
         let loadingHTML = "<html><body style='background:#111;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;'><h2>Connecting to Cloud Brain...</h2></body></html>"
         webView.loadHTMLString(loadingHTML, baseURL: nil)
         
-        // Connect to the Cloud Brain
         context.coordinator.connectToCloudBrain(webView: webView, urlString: cloudBrainURL)
         return webView
     }
@@ -37,7 +48,7 @@ struct WebView: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {}
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     
-    class Coordinator: NSObject, WKNavigationDelegate, URLSessionWebSocketDelegate {
+    class Coordinator: NSObject, WKNavigationDelegate, URLSessionWebSocketDelegate, WKScriptMessageHandler {
         var parent: WebView
         var webSocketTask: URLSessionWebSocketTask?
         
@@ -56,13 +67,11 @@ struct WebView: UIViewRepresentable {
                 switch result {
                 case .success(let message):
                     if case .string(let text) = message {
-                        // Parse JSON from Cloudflare (e.g., {"type": "update", "html": "..."})
                         if let data = text.data(using: .utf8),
                            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                            let type = json["type"] as? String, type == "update",
                            let html = json["html"] as? String {
                             DispatchQueue.main.async {
-                                // Load the HTML streamed from the Cloud Brain
                                 webView.loadHTMLString(html, baseURL: URL(string: "https://chat.deepseek.com"))
                             }
                         }
@@ -74,7 +83,7 @@ struct WebView: UIViewRepresentable {
             }
         }
         
-        // Send commands to Cloud Brain (You can call this from your SwiftUI buttons later)
+        // Send commands to Cloud Brain
         func sendCommand(type: String, data: [String: Any]) {
             let payload = ["type": type].merging(data) { _, new in new }
             if let jsonData = try? JSONSerialization.data(withJSONObject: payload),
@@ -82,6 +91,14 @@ struct WebView: UIViewRepresentable {
                 webSocketTask?.send(.string(jsonString)) { error in
                     if let error = error { print("Send error: \(error)") }
                 }
+            }
+        }
+        
+        // Catch the taps from the webview
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == "bridge", let dict = message.body as? [String: Any] {
+                print("User tapped: \(dict)")
+                // We will send this to the worker later
             }
         }
     }
